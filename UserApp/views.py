@@ -1,9 +1,17 @@
 
 
-# genai.configure(api_key="AIzaSyAMnuiOxnEEOa_4iCwsFPNUq6fbYrIrYDU")
-
+import os
+from dotenv import load_dotenv
 from google import genai
-client = genai.Client(api_key='AIzaSyBgPnsT89URIL-nFOQHBIy3QfQqQ9eSAi4')
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Get API key from environment variables
+api_key = os.getenv("GEMINI_API_KEY")
+
+# Initialize Gemini client
+client = genai.Client(api_key=api_key)
 
 
 from django.shortcuts import render
@@ -168,8 +176,12 @@ def brainstrokepredict(request):
     else:
         data = "No Macular Edema"
 
-    # Read original image
-    img = cv2.imread(BASE_DIR + uploaded_file_url)
+    # Load original image
+    image_path = os.path.join(BASE_DIR, uploaded_file_url.lstrip('/'))
+    img = cv2.imread(image_path)
+    if img is None:
+        return render(request, 'UserApp/UserHome.html', {'result': "Error: Could not read the uploaded image."})
+    
     output = imutils.resize(img, width=400)
 
     # Draw rectangle
@@ -187,7 +199,11 @@ def brainstrokepredict(request):
                 cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
 
     # Save output image
-    result_path = BASE_DIR + "/media/result.jpg"
+    result_dir = os.path.join(BASE_DIR, "media")
+    if not os.path.exists(result_dir):
+        os.makedirs(result_dir)
+        
+    result_path = os.path.join(result_dir, "result.jpg")
     cv2.imwrite(result_path, output)
 
     return render(request, 'UserApp/UserHome.html', {
@@ -202,49 +218,35 @@ def chatbot_page(request):
 
 @csrf_exempt
 def chatbot(request):
-
     if request.method == "POST":
-
         data = json.loads(request.body)
         user_message = data.get("message")
 
+        # Initialize chat history in session if not present
+        if 'chat_history' not in request.session:
+            request.session['chat_history'] = []
+        
+        # Keep only the last 10 messages to stay within token limits and session size
+        history = request.session['chat_history'][-10:]
+        history_context = "\n".join([f"{'Patient' if i%2==0 else 'Assistant'}: {msg}" for i, msg in enumerate(history)])
+
         try:
-
             prompt = f"""
-          You are an AI healthcare assistant for diabetic patients.
-
+            You are an AI healthcare assistant for diabetic patients.
             Your goal is to give short, relevant, and meaningful responses.
 
             Conversation Rules:
             - Respond in ONE line whenever possible.
             - Only answer what the user asked (no extra explanation).
             - Keep answers simple, clear, and human-like.
-            - Avoid medical jargon unless necessary.
-            - Do not give long paragraphs.
             - Use a friendly, conversational tone.
-            - Remember previous messages in the conversation.
-            - Use past context to avoid repeating information.
-            - If the user asks a follow-up, respond based on earlier messages.
-            - Do not restart explanations unless asked.
-            - Avoid sounding like a textbook.
+            - Use the provided context to avoid repeating information or asking things already answered.
 
-            Response Rules:
-            - Respond in ONE line whenever possible.
-            - Only answer what the user asked (no extra explanation).
-            - If the user asks about precautions, give 2–3 short points.
-            - Keep answers simple, clear, and human-like.
-            - Avoid medical jargon unless necessary.
+            Scope:
+            You can help with: diabetic retinopathy, blood sugar control, diet recommendations, exercise, and when to consult a doctor.
 
-           Scope:
-            You can help with:
-            - diabetic retinopathy
-            - blood sugar control
-            - diet recommendations
-            - exercise
-            - when to consult a doctor
-
-            If the question is unrelated to diabetes, reply:
-            "I can only help with diabetes-related questions."
+            Context of previous conversation:
+            {history_context}
 
             Patient Question:
             {user_message}
@@ -255,10 +257,21 @@ def chatbot(request):
                 contents=prompt
             )
 
-            reply = response.text
+            reply = response.text.strip()
+            
+            # Save to history
+            request.session['chat_history'].append(user_message)
+            request.session['chat_history'].append(reply)
+            request.session.modified = True
 
         except Exception as e:
-            print(e)
-            reply = "Sorry, the AI assistant is currently unavailable."
+            print(f"Chatbot Error: {e}")
+            reply = "Sorry, the AI assistant is currently unavailable. Please verify your API key and internet connection."
 
         return JsonResponse({"reply": reply})
+
+# Auto-initialize database tables on startup
+try:
+    create_user_table()
+except Exception as e:
+    print(f"Database Initialization Error: {e}")

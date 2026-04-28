@@ -14,6 +14,7 @@ seaborn>=0.12.3
 
 # Google Generative AI
 google-genai>=0.1.0
+python-dotenv>=1.0.0
 
 # Deep learning
 tensorflow>=2.14.0
